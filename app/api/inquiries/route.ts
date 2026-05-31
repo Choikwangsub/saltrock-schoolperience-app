@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { assertAdminFromRequest } from "@/lib/api/adminGuard";
+import { sendInquiryAdminNotificationEmail } from "@/lib/notifications/adminEmail";
 import { syncInquiryById } from "@/lib/notion/sync";
 import { getPrograms } from "@/lib/programs";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -108,6 +109,7 @@ export async function POST(request: Request) {
         notion_page_id: null,
         sync_status: "pending",
         sync_error: null,
+        synced_at: null,
         organization_name: organizationName || null,
         program_interest: body.programInterest?.trim() || rawProgramValue,
         preferred_date: body.preferredDate?.trim() || null,
@@ -126,13 +128,31 @@ export async function POST(request: Request) {
       );
     }
 
-    const syncResult = await syncInquiryById(String(data.id));
+    const inquiryId = String(data.id);
+    const syncResult = await syncInquiryById(inquiryId);
+    const notifyResult = await sendInquiryAdminNotificationEmail({
+      id: inquiryId,
+      name,
+      phone,
+      email: body.email?.trim() || null,
+      organizationName,
+      programValue: body.programInterest?.trim() || rawProgramValue,
+      preferredDate: body.preferredDate?.trim() || null,
+      expectedStudents: body.expectedStudents?.trim() || null,
+      message,
+    });
+
+    if (!notifyResult.ok) {
+      console.error(`[inquiries] ${notifyResult.message}`);
+    }
+
     revalidateInquiryPaths();
 
     return NextResponse.json({
       ok: true,
-      id: data.id,
+      id: inquiryId,
       sync: syncResult,
+      notify: notifyResult,
       message: "문의가 접수되었습니다. 담당자가 확인 후 연락드리겠습니다.",
     });
   } catch (error) {
@@ -196,6 +216,7 @@ export async function PATCH(request: Request) {
     const updates: Record<string, unknown> = {
       sync_status: "pending",
       sync_error: null,
+      synced_at: null,
     };
 
     if (body.status) {

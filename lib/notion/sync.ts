@@ -2,7 +2,11 @@ import "server-only";
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getNotionClient, isNotionConfigured } from "@/lib/notion/client";
-import { getOrEnsureNotionDatabaseId, type NotionDatabaseKey } from "@/lib/notion/setup";
+import {
+  getNotionDatabaseDefinition,
+  getOrEnsureNotionDatabaseId,
+  type NotionDatabaseKey,
+} from "@/lib/notion/setup";
 
 interface SyncSingleResult {
   table: NotionDatabaseKey;
@@ -49,6 +53,136 @@ function safeMessage(error: unknown) {
   return "알 수 없는 동기화 오류";
 }
 
+function parseMissingPropertyNames(message: string) {
+  const matched = message.match(/Could not find property with name or id:\s*([^.\n]+)/i);
+  if (!matched?.[1]) {
+    return [];
+  }
+
+  const raw = matched[1].trim();
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(",")
+    .map((item) => item.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
+const ensuredSchemaDatabaseIdSet = new Set<string>();
+
+function getSchemaMessage(tableKey: NotionDatabaseKey, databaseName: string, missing: string[]) {
+  return `[${tableKey}] Notion "${databaseName}" DB에 누락된 속성: ${missing.join(", ")}`;
+}
+
+function extractDataSourceId(database: unknown) {
+  if (!database || typeof database !== "object") {
+    return null;
+  }
+
+  const sources = (database as { data_sources?: Array<{ id?: string }> }).data_sources;
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return null;
+  }
+
+  const firstId = sources[0]?.id;
+  return typeof firstId === "string" && firstId ? firstId : null;
+}
+
+async function addMissingProperties(
+  notion: ReturnType<typeof getNotionClient> extends infer T ? Exclude<T, null> : never,
+  databaseId: string,
+  databaseObject: unknown,
+  missingEntries: Array<[string, unknown]>,
+) {
+  const properties = Object.fromEntries(missingEntries);
+  const notionAny = notion as unknown as {
+    dataSources?: {
+      update?: (params: Record<string, unknown>) => Promise<unknown>;
+    };
+    request?: (params: Record<string, unknown>) => Promise<unknown>;
+  };
+
+  const dataSourceId = extractDataSourceId(databaseObject);
+  if (dataSourceId && notionAny.dataSources?.update) {
+    await notionAny.dataSources.update({
+      data_source_id: dataSourceId,
+      properties,
+    });
+    return;
+  }
+
+  if (!notionAny.request) {
+    throw new Error("Notion API 요청 메서드를 찾을 수 없습니다.");
+  }
+
+  await notionAny.request({
+    path: `databases/${databaseId}`,
+    method: "patch",
+    body: { properties },
+  });
+}
+
+async function ensureNotionDatabaseProperties(
+  tableKey: NotionDatabaseKey,
+  databaseId: string,
+) {
+  if (ensuredSchemaDatabaseIdSet.has(`${tableKey}:${databaseId}`)) {
+    return;
+  }
+
+  const notion = getNotionClient();
+  if (!notion) {
+    throw new Error("Notion 클라이언트를 초기화하지 못했습니다.");
+  }
+
+  const definition = getNotionDatabaseDefinition(tableKey);
+  if (!definition) {
+    throw new Error(`Notion DB 정의를 찾을 수 없습니다: ${tableKey}`);
+  }
+
+  const database = await notion.databases.retrieve({ database_id: databaseId });
+  const existingProperties = "properties" in database ? database.properties : {};
+
+  const missingEntries = Object.entries(definition.properties).filter(
+    ([propertyName]) => !Object.prototype.hasOwnProperty.call(existingProperties, propertyName),
+  );
+
+  if (missingEntries.length === 0) {
+    ensuredSchemaDatabaseIdSet.add(`${tableKey}:${databaseId}`);
+    return;
+  }
+
+  const missingNames = missingEntries.map(([name]) => name);
+  try {
+    await addMissingProperties(notion, databaseId, database, missingEntries);
+  } catch (error) {
+    const errorText = safeMessage(error);
+    const parsedMissing = parseMissingPropertyNames(errorText);
+    const namesForMessage = parsedMissing.length > 0 ? parsedMissing : missingNames;
+    throw new Error(
+      `${getSchemaMessage(tableKey, definition.name, namesForMessage)}. 자동 추가 실패: ${errorText}`,
+    );
+  }
+
+  const refreshedDatabase = await notion.databases.retrieve({ database_id: databaseId });
+  const refreshedProperties =
+    "properties" in refreshedDatabase ? refreshedDatabase.properties : {};
+  const stillMissing = missingNames.filter(
+    (propertyName) =>
+      !Object.prototype.hasOwnProperty.call(refreshedProperties, propertyName),
+  );
+
+  if (stillMissing.length > 0) {
+    throw new Error(
+      `${getSchemaMessage(tableKey, definition.name, stillMissing)}. Notion DB 속성 확인 후 /hub/notion에서 재동기화를 시도해 주세요.`,
+    );
+  }
+
+  ensuredSchemaDatabaseIdSet.add(`${tableKey}:${databaseId}`);
+}
+
 async function upsertNotionPage(
   tableKey: NotionDatabaseKey,
   rowId: string,
@@ -63,6 +197,7 @@ async function upsertNotionPage(
   if (!databaseId) {
     throw new Error(`Notion DB ID를 찾을 수 없습니다: ${tableKey}`);
   }
+  await ensureNotionDatabaseProperties(tableKey, databaseId);
 
   const propertiesByTable: Record<NotionDatabaseKey, Record<string, unknown>> = {
     gallery_albums: {
@@ -213,6 +348,7 @@ async function writeSyncSuccess(
       notion_page_id: notionPageId,
       sync_status: "synced",
       sync_error: null,
+      synced_at: new Date().toISOString(),
     })
     .eq("id", id);
 }
@@ -224,6 +360,7 @@ async function writeSyncFailure(table: NotionDatabaseKey, id: string, message: s
     .update({
       sync_status: "failed",
       sync_error: message.slice(0, 500),
+      synced_at: null,
     })
     .eq("id", id);
 }

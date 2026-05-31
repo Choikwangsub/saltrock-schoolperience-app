@@ -20,8 +20,45 @@ interface NotionStatusResponse {
     inquiries: number;
     calendarEvents: number;
   };
+  failedItems?: Array<{
+    table: "gallery_albums" | "gallery_photos" | "inquiries" | "calendar_events";
+    id: string;
+    syncError: string;
+    updatedAt: string | null;
+  }>;
   queryErrors?: string[];
   message?: string;
+}
+
+function getTableLabel(
+  table: "gallery_albums" | "gallery_photos" | "inquiries" | "calendar_events",
+) {
+  switch (table) {
+    case "gallery_albums":
+      return "갤러리 앨범";
+    case "gallery_photos":
+      return "갤러리 사진";
+    case "inquiries":
+      return "문의";
+    case "calendar_events":
+      return "일정";
+    default:
+      return table;
+  }
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(parsed);
 }
 
 function HubNotionContent({ adminPassword }: { adminPassword: string }) {
@@ -198,6 +235,17 @@ function HubNotionContent({ adminPassword }: { adminPassword: string }) {
                 <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
                   {status.queryErrors.map((error) => (
                     <p key={error}>{error}</p>
+                  ))}
+                </div>
+              ) : null}
+              {status?.failedItems && status.failedItems.length > 0 ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  <p className="font-semibold">동기화 실패 상세</p>
+                  {status.failedItems.map((item) => (
+                    <p key={`${item.table}-${item.id}`} className="mt-1 leading-relaxed">
+                      [{getTableLabel(item.table)} | {item.id}] {item.syncError} (시각:{" "}
+                      {formatDateTime(item.updatedAt)})
+                    </p>
                   ))}
                 </div>
               ) : null}

@@ -65,11 +65,14 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ADMIN_PASSWORD=
+ADMIN_NOTIFY_EMAIL=
+RESEND_API_KEY=
+ADMIN_NOTIFY_FROM_EMAIL=
 ```
 
 보안 원칙:
 
-- `NOTION_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`는 서버 전용입니다.
+- `NOTION_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`, `RESEND_API_KEY`는 서버 전용입니다.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`만 클라이언트 공개용입니다.
 - `.env.local`은 GitHub에 올리면 안 됩니다. (`.gitignore`에 포함됨)
 
@@ -183,6 +186,27 @@ npm run notion:setup
 
 이 스크립트는 `NOTION_PAGE_ID` 하위 DB를 생성/확인합니다(중복 생성 방지).
 
+문의 동기화 동작:
+
+1. 문의 폼 제출
+2. Supabase `inquiries` 저장
+3. 저장된 문의 ID로 Notion `SaltRock Inquiries`에 즉시 생성/업데이트 시도
+4. 성공 시 `sync_status = synced`, `synced_at` 기록
+5. 실패 시 `sync_status = failed`, `sync_error` 기록
+6. `/hub/notion`의 실패 항목 재동기화로 재시도 가능
+
+Notion 속성 누락 대응:
+
+- 동기화 전에 필요한 속성(Name, Phone, Email, Program Slug, Message, Status, Supabase ID, Created At)을 점검합니다.
+- 누락 속성이 있으면 자동 추가를 시도합니다.
+- 자동 추가가 실패하면 누락된 속성명을 포함한 한글 오류가 `sync_error`에 기록되고 `/hub/notion` 화면에서 확인할 수 있습니다.
+
+관리자 이메일 알림:
+
+- `ADMIN_NOTIFY_EMAIL` 설정 시 문의 접수 직후 관리자 알림 메일을 전송합니다.
+- 현재 전송은 Resend API(`RESEND_API_KEY`) 방식입니다.
+- 발신 주소는 `ADMIN_NOTIFY_FROM_EMAIL`이 있으면 사용하고, 없으면 기본값(`onboarding@resend.dev`)을 사용합니다.
+
 ## 9) 캐시/최신화 처리
 
 데이터 변경 API에서 `revalidatePath`를 사용합니다.
@@ -232,6 +256,9 @@ Vercel Project Environment Variables에 아래 키가 모두 있는지 확인:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ADMIN_PASSWORD`
+- `ADMIN_NOTIFY_EMAIL`
+- `RESEND_API_KEY` (문의 알림 메일 전송 시)
+- `ADMIN_NOTIFY_FROM_EMAIL` (선택)
 
 그리고 배포 전 로컬에서 반드시:
 

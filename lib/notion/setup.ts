@@ -13,7 +13,7 @@ export const NOTION_DATABASE_KEYS = [
 
 export type NotionDatabaseKey = (typeof NOTION_DATABASE_KEYS)[number];
 
-interface NotionDatabaseDefinition {
+export interface NotionDatabaseDefinition {
   key: NotionDatabaseKey;
   name: string;
   properties: Record<string, unknown>;
@@ -100,6 +100,10 @@ const databaseDefinitions: NotionDatabaseDefinition[] = [
     },
   },
 ];
+
+export function getNotionDatabaseDefinition(key: NotionDatabaseKey) {
+  return databaseDefinitions.find((definition) => definition.key === key) ?? null;
+}
 
 const databaseIdCache = new Map<NotionDatabaseKey, string>();
 
