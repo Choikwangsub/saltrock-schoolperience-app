@@ -3,38 +3,38 @@
 import { useMemo, useState } from "react";
 import { Send } from "lucide-react";
 import { submitInquiry } from "@/lib/inquiry";
-import type { Inquiry, Program } from "@/lib/types";
+import type { Program } from "@/lib/types";
 
 interface ContactFormProps {
   programs: Program[];
 }
 
-const initialInquiry: Inquiry = {
-  schoolName: "",
-  managerName: "",
+interface InquiryFormState {
+  name: string;
+  phone: string;
+  email: string;
+  organizationName: string;
+  programInterest: string;
+  preferredDate: string;
+  expectedStudents: string;
+  message: string;
+}
+
+const initialState: InquiryFormState = {
+  name: "",
   phone: "",
   email: "",
-  selectedProgram: "",
+  organizationName: "",
+  programInterest: "",
   preferredDate: "",
   expectedStudents: "",
-  targetGrade: "",
-  location: "",
   message: "",
-  status: "draft",
 };
-
-const requiredFields: Array<{ key: keyof Inquiry; label: string }> = [
-  { key: "schoolName", label: "학교/기관명" },
-  { key: "managerName", label: "담당자명" },
-  { key: "phone", label: "연락처" },
-  { key: "selectedProgram", label: "희망 프로그램" },
-  { key: "message", label: "문의 내용" },
-];
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function ContactForm({ programs }: ContactFormProps) {
-  const [formData, setFormData] = useState<Inquiry>(initialInquiry);
+  const [formData, setFormData] = useState<InquiryFormState>(initialState);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -44,7 +44,7 @@ export function ContactForm({ programs }: ContactFormProps) {
     [programs],
   );
 
-  const handleChange = (key: keyof Inquiry, value: string) => {
+  const updateField = (key: keyof InquiryFormState, value: string) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
     setErrorMessage("");
     setSuccessMessage("");
@@ -55,8 +55,16 @@ export function ContactForm({ programs }: ContactFormProps) {
     setErrorMessage("");
     setSuccessMessage("");
 
+    const requiredFields: Array<{ key: keyof InquiryFormState; label: string }> = [
+      { key: "name", label: "이름" },
+      { key: "phone", label: "연락처" },
+      { key: "organizationName", label: "학교/기관명" },
+      { key: "programInterest", label: "관심 프로그램" },
+      { key: "message", label: "문의 내용" },
+    ];
+
     const missing = requiredFields
-      .filter(({ key }) => !String(formData[key] ?? "").trim())
+      .filter(({ key }) => !formData[key].trim())
       .map(({ label }) => label);
 
     if (missing.length > 0) {
@@ -71,15 +79,24 @@ export function ContactForm({ programs }: ContactFormProps) {
 
     setIsSubmitting(true);
     try {
-      const payload: Inquiry = { ...formData, status: "submitted" };
-      const result = await submitInquiry(payload);
+      const result = await submitInquiry({
+        name: formData.name.trim(),
+        phone: formData.phone.trim(),
+        email: formData.email.trim() || undefined,
+        organizationName: formData.organizationName.trim(),
+        programInterest: formData.programInterest.trim(),
+        preferredDate: formData.preferredDate.trim() || undefined,
+        expectedStudents: formData.expectedStudents.trim() || undefined,
+        message: formData.message.trim(),
+      });
+
       if (!result.ok) {
-        setErrorMessage("문의 접수 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+        setErrorMessage(result.message);
         return;
       }
 
       setSuccessMessage(result.message);
-      setFormData(initialInquiry);
+      setFormData(initialState);
     } finally {
       setIsSubmitting(false);
     }
@@ -92,25 +109,15 @@ export function ContactForm({ programs }: ContactFormProps) {
     >
       <h3 className="font-heading text-2xl font-extrabold text-brand-primary">문의 폼</h3>
       <p className="mt-2 text-sm text-foreground/80">
-        입력하신 내용은 현재 로컬 테스트 단계에서 콘솔 출력으로만 처리됩니다.
+        문의 내용은 안전하게 접수되며, 담당자가 확인 후 연락드립니다.
       </p>
 
       <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
         <label className="text-sm font-semibold text-foreground/85">
-          학교/기관명 *
+          이름 *
           <input
-            value={formData.schoolName}
-            onChange={(event) => handleChange("schoolName", event.target.value)}
-            className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
-            placeholder="예: 솔트락초등학교"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-foreground/85">
-          담당자명 *
-          <input
-            value={formData.managerName}
-            onChange={(event) => handleChange("managerName", event.target.value)}
+            value={formData.name}
+            onChange={(event) => updateField("name", event.target.value)}
             className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
             placeholder="예: 홍길동"
           />
@@ -120,28 +127,38 @@ export function ContactForm({ programs }: ContactFormProps) {
           연락처 *
           <input
             value={formData.phone}
-            onChange={(event) => handleChange("phone", event.target.value)}
+            onChange={(event) => updateField("phone", event.target.value)}
             className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
             placeholder="예: 010-0000-0000"
           />
         </label>
 
         <label className="text-sm font-semibold text-foreground/85">
-          이메일 (선택)
+          이메일
           <input
             type="email"
             value={formData.email}
-            onChange={(event) => handleChange("email", event.target.value)}
+            onChange={(event) => updateField("email", event.target.value)}
             className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
             placeholder="예: contact@saltrock-schoolperience.com"
           />
         </label>
 
         <label className="text-sm font-semibold text-foreground/85">
-          희망 프로그램 *
+          학교/기관명 *
+          <input
+            value={formData.organizationName}
+            onChange={(event) => updateField("organizationName", event.target.value)}
+            className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
+            placeholder="예: 솔트락초등학교"
+          />
+        </label>
+
+        <label className="text-sm font-semibold text-foreground/85">
+          관심 프로그램 *
           <select
-            value={formData.selectedProgram}
-            onChange={(event) => handleChange("selectedProgram", event.target.value)}
+            value={formData.programInterest}
+            onChange={(event) => updateField("programInterest", event.target.value)}
             className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
           >
             <option value="">프로그램을 선택해 주세요</option>
@@ -158,39 +175,19 @@ export function ContactForm({ programs }: ContactFormProps) {
           <input
             type="date"
             value={formData.preferredDate}
-            onChange={(event) => handleChange("preferredDate", event.target.value)}
+            onChange={(event) => updateField("preferredDate", event.target.value)}
             className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-foreground/85">
-          예상 인원
-          <input
-            value={formData.expectedStudents}
-            onChange={(event) => handleChange("expectedStudents", event.target.value)}
-            className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
-            placeholder="예: 90명"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-foreground/85">
-          대상 학년
-          <input
-            value={formData.targetGrade}
-            onChange={(event) => handleChange("targetGrade", event.target.value)}
-            className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
-            placeholder="예: 초등 4~6학년"
           />
         </label>
       </div>
 
       <label className="mt-4 block text-sm font-semibold text-foreground/85">
-        운영 장소
+        예상 인원
         <input
-          value={formData.location}
-          onChange={(event) => handleChange("location", event.target.value)}
+          value={formData.expectedStudents}
+          onChange={(event) => updateField("expectedStudents", event.target.value)}
           className="mt-1 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
-          placeholder="예: 솔트락초등학교 강당"
+          placeholder="예: 80명"
         />
       </label>
 
@@ -198,9 +195,9 @@ export function ContactForm({ programs }: ContactFormProps) {
         문의 내용 *
         <textarea
           value={formData.message}
-          onChange={(event) => handleChange("message", event.target.value)}
+          onChange={(event) => updateField("message", event.target.value)}
           className="mt-1 min-h-28 w-full rounded-xl border border-brand-primary/15 px-3 py-3 text-sm outline-none ring-brand-secondary focus:ring-2"
-          placeholder="희망 일정, 운영 시간, 요청 사항 등을 작성해 주세요."
+          placeholder="운영 일정, 장소, 요청사항 등을 작성해 주세요."
         />
       </label>
 
@@ -223,11 +220,6 @@ export function ContactForm({ programs }: ContactFormProps) {
       >
         <Send className="h-4 w-4" aria-hidden />
         {isSubmitting ? "접수 중..." : "문의 접수하기"}
-        {!isSubmitting ? (
-          <span className="ml-1 inline-flex items-center rounded-full bg-brand-accent px-2 py-0.5 text-[11px] font-bold text-brand-primary">
-            빠른 상담
-          </span>
-        ) : null}
       </button>
     </form>
   );

@@ -107,6 +107,12 @@ export function Header() {
           <Link href="/#programs" className="hover:text-brand-secondary">
             프로그램 안내
           </Link>
+          <Link href="/gallery" className="hover:text-brand-secondary">
+            갤러리
+          </Link>
+          <Link href="/calendar" className="hover:text-brand-secondary">
+            운영 일정
+          </Link>
           <Link href="/#why-saltrock" className="hover:text-brand-secondary">
             이용 안내
           </Link>
@@ -190,6 +196,20 @@ export function Header() {
               className="rounded-lg px-3 py-2.5 text-sm font-semibold text-brand-primary hover:bg-brand-cream"
             >
               프로그램 안내
+            </Link>
+            <Link
+              href="/gallery"
+              onClick={() => setIsMenuOpen(false)}
+              className="rounded-lg px-3 py-2.5 text-sm font-semibold text-brand-primary hover:bg-brand-cream"
+            >
+              갤러리
+            </Link>
+            <Link
+              href="/calendar"
+              onClick={() => setIsMenuOpen(false)}
+              className="rounded-lg px-3 py-2.5 text-sm font-semibold text-brand-primary hover:bg-brand-cream"
+            >
+              운영 일정
             </Link>
             <Link
               href="/#why-saltrock"

@@ -14,6 +14,12 @@ export function Footer() {
           <Link href="/#programs" className="hover:text-brand-accent">
             프로그램
           </Link>
+          <Link href="/gallery" className="hover:text-brand-accent">
+            갤러리
+          </Link>
+          <Link href="/calendar" className="hover:text-brand-accent">
+            운영 일정
+          </Link>
           <Link href="/#contact" className="hover:text-brand-accent">
             문의하기
           </Link>

@@ -56,3 +56,51 @@ export interface Inquiry {
   message: string;
   status: InquiryStatus;
 }
+
+export type InquiryLifecycleStatus =
+  | "new"
+  | "contacted"
+  | "confirmed"
+  | "completed"
+  | "cancelled";
+
+export interface InquiryRecord {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  organizationName: string;
+  programInterest: string;
+  preferredDate: string | null;
+  expectedStudents: string | null;
+  message: string;
+  status: InquiryLifecycleStatus;
+  adminMemo: string | null;
+  createdAt: string;
+}
+
+export interface GalleryItem {
+  id: string;
+  title: string;
+  slug: string;
+  category: string;
+  description: string;
+  imageUrl: string;
+  isPublished: boolean;
+  sortOrder: number;
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  date: string;
+  startTime: string | null;
+  endTime: string | null;
+  programName: string | null;
+  organizationName: string | null;
+  location: string | null;
+  status: string;
+  memo: string | null;
+  isPublic: boolean;
+  createdAt: string;
+}

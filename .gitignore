@@ -1,7 +1,7 @@
 # dependencies
 node_modules/
 
-# next.js
+# next.js build outputs
 .next/
 out/
 dist/
@@ -16,13 +16,16 @@ pnpm-debug.log*
 *.log
 
 # env files
+.env
 .env.local
+.env*.local
 
-# system files
+# vercel (local only)
+.vercel
+
+# editor/cache/system
 .DS_Store
 *.pem
-
-# editor and cache
 .pnp
 .pnp.*
 .yarn/*
@@ -31,24 +34,6 @@ pnpm-debug.log*
 !.yarn/releases
 !.yarn/versions
 
-# vercel (local only)
-.vercel
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-.env.local
-.env*.local
-
-
-.env.local
-.env*.local
-
-.env
-.env.local
-.env*.local
-node_modules/
-.next/
-out/
-.vercel/
