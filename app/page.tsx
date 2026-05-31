@@ -1,10 +1,10 @@
 import { CheckCircle2, Handshake, ShieldCheck, Sparkles, Users } from "lucide-react";
 import { ContactSection } from "@/components/ContactSection";
-import { GalleryGrid } from "@/components/GalleryGrid";
+import { ProgramFolderGrid } from "@/components/gallery/ProgramFolderGrid";
 import { HeroSection } from "@/components/HeroSection";
 import { ProgramGrid } from "@/components/ProgramGrid";
 import { SectionTitle } from "@/components/SectionTitle";
-import { getGalleryItems } from "@/lib/gallery";
+import { getPublicGalleryProgramFolders } from "@/lib/gallery/queries";
 import { getPrograms } from "@/lib/programs";
 
 const platformPoints = [
@@ -37,13 +37,13 @@ const platformPoints = [
 
 export default async function Home() {
   const programs = getPrograms();
-  const galleryItems = await getGalleryItems();
+  const galleryFolders = await getPublicGalleryProgramFolders();
 
   return (
     <>
       <HeroSection />
       <ProgramGrid programs={programs} />
-      <GalleryGrid items={galleryItems} previewCount={6} showHeaderLink />
+      <ProgramFolderGrid items={galleryFolders} previewCount={6} showHeaderLink />
       <section id="why-saltrock" className="bg-white py-16 md:py-20">
         <div id="guide" />
         <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">

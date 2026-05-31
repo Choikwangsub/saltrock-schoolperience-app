@@ -1,229 +1,261 @@
+import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
-import { isValidAdminPassword } from "@/lib/adminAuth";
+import { assertAdminFromRequest } from "@/lib/api/adminGuard";
+import { syncCalendarEventById } from "@/lib/notion/sync";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
-function getAdminPasswordFromHeaders(headers: Headers) {
-  return headers.get("x-admin-password");
-}
-
 function mapCalendarRow(row: Record<string, unknown>) {
+  const eventDate = String(row.event_date ?? row.date ?? "");
+  const startTime = typeof row.start_time === "string" ? row.start_time : null;
+  const endTime = typeof row.end_time === "string" ? row.end_time : null;
+  const programSlug =
+    typeof row.program_slug === "string"
+      ? row.program_slug
+      : typeof row.program_name === "string"
+        ? row.program_name
+        : null;
+
   return {
     id: String(row.id ?? ""),
     title: String(row.title ?? ""),
-    date: String(row.date ?? ""),
-    startTime: row.start_time ? String(row.start_time) : null,
-    endTime: row.end_time ? String(row.end_time) : null,
-    programName: row.program_name ? String(row.program_name) : null,
-    organizationName: row.organization_name ? String(row.organization_name) : null,
-    location: row.location ? String(row.location) : null,
-    status: row.status ? String(row.status) : "scheduled",
-    memo: row.memo ? String(row.memo) : null,
+    programSlug,
+    eventDate,
+    date: eventDate,
+    startTime,
+    endTime,
+    location: typeof row.location === "string" ? row.location : null,
+    description:
+      typeof row.description === "string"
+        ? row.description
+        : typeof row.memo === "string"
+          ? row.memo
+          : null,
+    status: typeof row.status === "string" ? row.status : "scheduled",
     isPublic: Boolean(row.is_public),
-    createdAt: row.created_at ? String(row.created_at) : "",
+    notionPageId: typeof row.notion_page_id === "string" ? row.notion_page_id : null,
+    syncStatus: typeof row.sync_status === "string" ? row.sync_status : "pending",
+    syncError: typeof row.sync_error === "string" ? row.sync_error : null,
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
   };
+}
+
+function revalidateCalendarPaths() {
+  revalidatePath("/calendar");
+  revalidatePath("/hub/calendar");
+  revalidatePath("/hub/notion");
+  revalidatePath("/hub");
 }
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const publicOnly = url.searchParams.get("public") === "true";
-  const adminPassword = getAdminPasswordFromHeaders(request.headers);
 
-  if (!publicOnly && !isValidAdminPassword(adminPassword)) {
-    return NextResponse.json(
-      { ok: false, message: "관리자 인증이 필요합니다." },
-      { status: 401 },
-    );
+  if (!publicOnly) {
+    const unauthorized = assertAdminFromRequest(request);
+    if (unauthorized) {
+      return unauthorized;
+    }
   }
 
   try {
     const supabase = getSupabaseAdmin();
-    let query = supabase.from("calendar_events").select("*").order("date", { ascending: true });
+    let query = supabase
+      .from("calendar_events")
+      .select("*")
+      .order("event_date", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
 
     if (publicOnly) {
       query = query.eq("is_public", true);
     }
 
     const { data, error } = await query;
-
     if (error) {
-      return NextResponse.json(
-        { ok: false, message: "일정 조회 중 오류가 발생했습니다.", error: error.message },
-        { status: 500 },
-      );
+      return NextResponse.json({ ok: false, message: error.message, items: [] }, { status: 500 });
     }
 
     return NextResponse.json({
       ok: true,
       items: (data ?? []).map((row) => mapCalendarRow(row as Record<string, unknown>)),
     });
-  } catch {
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "일정 조회 처리 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "일정 조회 중 오류", items: [] },
       { status: 500 },
     );
   }
 }
 
 export async function POST(request: Request) {
-  const adminPassword = getAdminPasswordFromHeaders(request.headers);
-  if (!isValidAdminPassword(adminPassword)) {
-    return NextResponse.json(
-      { ok: false, message: "관리자 인증이 필요합니다." },
-      { status: 401 },
-    );
+  const unauthorized = assertAdminFromRequest(request);
+  if (unauthorized) {
+    return unauthorized;
   }
 
   try {
     const body = (await request.json()) as {
       title?: string;
+      eventDate?: string;
       date?: string;
       startTime?: string;
       endTime?: string;
+      programSlug?: string;
       programName?: string;
-      organizationName?: string;
       location?: string;
-      status?: string;
+      description?: string;
       memo?: string;
       isPublic?: boolean;
+      status?: string;
     };
 
     const title = body.title?.trim() ?? "";
-    const date = body.date?.trim() ?? "";
-    if (!title || !date) {
+    const eventDate = body.eventDate?.trim() || body.date?.trim() || "";
+    if (!title || !eventDate) {
       return NextResponse.json(
-        { ok: false, message: "제목과 날짜는 필수입니다." },
+        { ok: false, message: "title과 eventDate(date)는 필수입니다." },
         { status: 400 },
       );
     }
 
     const supabase = getSupabaseAdmin();
-    const { error } = await supabase.from("calendar_events").insert({
-      title,
-      date,
-      start_time: body.startTime?.trim() || null,
-      end_time: body.endTime?.trim() || null,
-      program_name: body.programName?.trim() || null,
-      organization_name: body.organizationName?.trim() || null,
-      location: body.location?.trim() || null,
-      status: body.status?.trim() || "scheduled",
-      memo: body.memo?.trim() || null,
-      is_public: Boolean(body.isPublic),
-    });
+    const { data, error } = await supabase
+      .from("calendar_events")
+      .insert({
+        title,
+        program_slug: body.programSlug?.trim() || body.programName?.trim() || null,
+        event_date: eventDate,
+        start_time: body.startTime?.trim() || null,
+        end_time: body.endTime?.trim() || null,
+        location: body.location?.trim() || null,
+        description: body.description?.trim() || body.memo?.trim() || null,
+        status: body.status?.trim() || "scheduled",
+        is_public: Boolean(body.isPublic),
+        sync_status: "pending",
+        sync_error: null,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
+    if (error || !data?.id) {
       return NextResponse.json(
-        { ok: false, message: "일정 저장 중 오류가 발생했습니다.", error: error.message },
+        { ok: false, message: error?.message ?? "일정 등록 실패" },
         { status: 500 },
       );
     }
 
-    return NextResponse.json({ ok: true, message: "일정이 추가되었습니다." });
-  } catch {
+    const syncResult = await syncCalendarEventById(String(data.id));
+    revalidateCalendarPaths();
+
+    return NextResponse.json({
+      ok: true,
+      id: data.id,
+      sync: syncResult,
+      message: "일정이 등록되었습니다.",
+    });
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "일정 저장 처리 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "일정 등록 중 오류" },
       { status: 500 },
     );
   }
 }
 
 export async function PATCH(request: Request) {
-  const adminPassword = getAdminPasswordFromHeaders(request.headers);
-  if (!isValidAdminPassword(adminPassword)) {
-    return NextResponse.json(
-      { ok: false, message: "관리자 인증이 필요합니다." },
-      { status: 401 },
-    );
+  const unauthorized = assertAdminFromRequest(request);
+  if (unauthorized) {
+    return unauthorized;
   }
 
   try {
     const body = (await request.json()) as {
       id?: string;
       title?: string;
+      eventDate?: string;
       date?: string;
       startTime?: string;
       endTime?: string;
+      programSlug?: string;
       programName?: string;
-      organizationName?: string;
       location?: string;
-      status?: string;
+      description?: string;
       memo?: string;
       isPublic?: boolean;
+      status?: string;
     };
 
     const id = body.id?.trim();
     if (!id) {
-      return NextResponse.json(
-        { ok: false, message: "수정할 일정 ID가 필요합니다." },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, message: "일정 ID가 필요합니다." }, { status: 400 });
     }
 
-    const updates: Record<string, unknown> = {};
+    const updates: Record<string, unknown> = {
+      sync_status: "pending",
+      sync_error: null,
+    };
+
     if (body.title !== undefined) updates.title = body.title.trim();
-    if (body.date !== undefined) updates.date = body.date.trim();
+    if (body.eventDate !== undefined || body.date !== undefined) {
+      updates.event_date = body.eventDate?.trim() || body.date?.trim() || null;
+    }
     if (body.startTime !== undefined) updates.start_time = body.startTime.trim() || null;
     if (body.endTime !== undefined) updates.end_time = body.endTime.trim() || null;
-    if (body.programName !== undefined) updates.program_name = body.programName.trim() || null;
-    if (body.organizationName !== undefined) {
-      updates.organization_name = body.organizationName.trim() || null;
+    if (body.programSlug !== undefined || body.programName !== undefined) {
+      updates.program_slug = body.programSlug?.trim() || body.programName?.trim() || null;
     }
     if (body.location !== undefined) updates.location = body.location.trim() || null;
-    if (body.status !== undefined) updates.status = body.status.trim() || "scheduled";
-    if (body.memo !== undefined) updates.memo = body.memo.trim() || null;
+    if (body.description !== undefined || body.memo !== undefined) {
+      updates.description = body.description?.trim() || body.memo?.trim() || null;
+    }
     if (body.isPublic !== undefined) updates.is_public = Boolean(body.isPublic);
+    if (body.status !== undefined) updates.status = body.status.trim() || "scheduled";
 
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from("calendar_events").update(updates).eq("id", id);
-
     if (error) {
-      return NextResponse.json(
-        { ok: false, message: "일정 수정 중 오류가 발생했습니다.", error: error.message },
-        { status: 500 },
-      );
+      return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, message: "일정이 업데이트되었습니다." });
-  } catch {
+    const syncResult = await syncCalendarEventById(id);
+    revalidateCalendarPaths();
+
+    return NextResponse.json({
+      ok: true,
+      sync: syncResult,
+      message: "일정이 수정되었습니다.",
+    });
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "일정 수정 처리 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "일정 수정 중 오류" },
       { status: 500 },
     );
   }
 }
 
 export async function DELETE(request: Request) {
-  const adminPassword = getAdminPasswordFromHeaders(request.headers);
-  if (!isValidAdminPassword(adminPassword)) {
-    return NextResponse.json(
-      { ok: false, message: "관리자 인증이 필요합니다." },
-      { status: 401 },
-    );
+  const unauthorized = assertAdminFromRequest(request);
+  if (unauthorized) {
+    return unauthorized;
   }
 
   try {
     const body = (await request.json()) as { id?: string };
     const id = body.id?.trim();
     if (!id) {
-      return NextResponse.json(
-        { ok: false, message: "삭제할 일정 ID가 필요합니다." },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, message: "일정 ID가 필요합니다." }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from("calendar_events").delete().eq("id", id);
-
     if (error) {
-      return NextResponse.json(
-        { ok: false, message: "일정 삭제 중 오류가 발생했습니다.", error: error.message },
-        { status: 500 },
-      );
+      return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
     }
 
+    revalidateCalendarPaths();
     return NextResponse.json({ ok: true, message: "일정이 삭제되었습니다." });
-  } catch {
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "일정 삭제 처리 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "일정 삭제 중 오류" },
       { status: 500 },
     );
   }

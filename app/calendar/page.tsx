@@ -2,7 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, Clock3, MapPin } from "lucide-react";
-import type { CalendarEventItem } from "@/lib/types";
+
+interface PublicCalendarEvent {
+  id: string;
+  title: string;
+  eventDate: string;
+  date: string;
+  startTime: string | null;
+  endTime: string | null;
+  location: string | null;
+  description: string | null;
+  status: string;
+  isPublic: boolean;
+  programSlug: string | null;
+}
 
 function formatDateOnly(value: string) {
   if (!value) {
@@ -30,7 +43,7 @@ function formatTimeRange(startTime: string | null, endTime: string | null) {
 }
 
 export default function CalendarPage() {
-  const [items, setItems] = useState<CalendarEventItem[]>([]);
+  const [items, setItems] = useState<PublicCalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -48,7 +61,7 @@ export default function CalendarPage() {
         const payload = (await response.json()) as {
           ok?: boolean;
           message?: string;
-          items?: CalendarEventItem[];
+          items?: PublicCalendarEvent[];
         };
 
         if (!response.ok || !payload.ok) {
@@ -80,8 +93,8 @@ export default function CalendarPage() {
   }, []);
 
   const groupedItems = useMemo(() => {
-    return items.reduce<Record<string, CalendarEventItem[]>>((acc, item) => {
-      const key = item.date;
+    return items.reduce<Record<string, PublicCalendarEvent[]>>((acc, item) => {
+      const key = item.eventDate || item.date;
       if (!acc[key]) {
         acc[key] = [];
       }
@@ -135,7 +148,7 @@ export default function CalendarPage() {
                   >
                     <h3 className="text-base font-bold text-brand-primary">{item.title}</h3>
                     <p className="mt-1 text-sm text-foreground/80">
-                      {item.programName || "프로그램명 미정"}
+                      {item.programSlug || "프로그램 미정"}
                     </p>
                     <div className="mt-3 space-y-1.5 text-sm text-foreground/85">
                       <p className="inline-flex items-center gap-2">
@@ -146,12 +159,11 @@ export default function CalendarPage() {
                         <MapPin className="h-4 w-4 text-brand-primary" aria-hidden />
                         {item.location || "장소 미정"}
                       </p>
-                      <p>기관명: {item.organizationName || "미정"}</p>
                       <p>상태: {item.status || "예정"}</p>
                     </div>
-                    {item.memo ? (
+                    {item.description ? (
                       <p className="mt-3 rounded-lg bg-brand-cream px-3 py-2 text-sm text-foreground/85">
-                        {item.memo}
+                        {item.description}
                       </p>
                     ) : null}
                   </article>

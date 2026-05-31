@@ -10,7 +10,78 @@ if (!NOTION_TOKEN || !NOTION_PAGE_ID) {
 
 const notion = new Client({ auth: NOTION_TOKEN });
 
-async function findChildDatabaseByTitle(pageId, title) {
+const databaseDefinitions = [
+  {
+    name: "SaltRock Gallery Albums",
+    properties: {
+      Title: { title: {} },
+      "Program Slug": { rich_text: {} },
+      "Event Date": { date: {} },
+      Location: { rich_text: {} },
+      Description: { rich_text: {} },
+      "Cover Image URL": { url: {} },
+      Public: { checkbox: {} },
+      "Supabase ID": { rich_text: {} },
+      "Created At": { date: {} },
+    },
+  },
+  {
+    name: "SaltRock Gallery Photos",
+    properties: {
+      Title: { title: {} },
+      "Album ID": { rich_text: {} },
+      "Program Slug": { rich_text: {} },
+      "Image URL": { url: {} },
+      Description: { rich_text: {} },
+      "Taken At": { date: {} },
+      "Sort Order": { number: { format: "number" } },
+      Public: { checkbox: {} },
+      "Supabase ID": { rich_text: {} },
+      "Created At": { date: {} },
+    },
+  },
+  {
+    name: "SaltRock Inquiries",
+    properties: {
+      Name: { title: {} },
+      Phone: { rich_text: {} },
+      Email: { email: {} },
+      "Program Slug": { rich_text: {} },
+      Message: { rich_text: {} },
+      Status: {
+        select: {
+          options: [
+            { name: "new", color: "blue" },
+            { name: "contacted", color: "yellow" },
+            { name: "confirmed", color: "green" },
+            { name: "completed", color: "purple" },
+            { name: "cancelled", color: "red" },
+          ],
+        },
+      },
+      "Supabase ID": { rich_text: {} },
+      "Created At": { date: {} },
+    },
+  },
+  {
+    name: "SaltRock Calendar Events",
+    properties: {
+      Title: { title: {} },
+      "Program Slug": { rich_text: {} },
+      "Event Date": { date: {} },
+      "Start Time": { rich_text: {} },
+      "End Time": { rich_text: {} },
+      Location: { rich_text: {} },
+      Description: { rich_text: {} },
+      Public: { checkbox: {} },
+      "Supabase ID": { rich_text: {} },
+      "Created At": { date: {} },
+    },
+  },
+];
+
+async function listChildDatabases(pageId) {
+  const map = new Map();
   let cursor;
 
   do {
@@ -20,28 +91,26 @@ async function findChildDatabaseByTitle(pageId, title) {
       start_cursor: cursor,
     });
 
-    const found = response.results.find((block) => {
-      return block.type === "child_database" && block.child_database.title === title;
-    });
-
-    if (found) {
-      return found.id;
+    for (const block of response.results) {
+      if (block.type === "child_database") {
+        map.set(block.child_database.title, block.id);
+      }
     }
 
     cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
   } while (cursor);
 
-  return null;
+  return map;
 }
 
-async function ensureDatabase({ title, properties }) {
-  const existingId = await findChildDatabaseByTitle(NOTION_PAGE_ID, title);
+async function ensureDatabase(definition, childMap) {
+  const existingId = childMap.get(definition.name);
   if (existingId) {
-    console.log(`[skip] ${title} already exists (${existingId})`);
+    console.log(`[skip] ${definition.name} already exists (${existingId})`);
     return existingId;
   }
 
-  const created = await notion.databases.create({
+  const payload = {
     parent: {
       type: "page_id",
       page_id: NOTION_PAGE_ID,
@@ -49,76 +118,25 @@ async function ensureDatabase({ title, properties }) {
     title: [
       {
         type: "text",
-        text: {
-          content: title,
-        },
+        text: { content: definition.name },
       },
     ],
-    properties,
-  });
+    properties: definition.properties,
+  };
 
-  console.log(`[create] ${title} created (${created.id})`);
+  const created = await notion.databases.create(payload);
+  console.log(`[create] ${definition.name} created (${created.id})`);
   return created.id;
 }
 
 async function main() {
-  const galleryProperties = {
-    제목: { title: {} },
-    slug: { rich_text: {} },
-    카테고리: {
-      select: {
-        options: [
-          { name: "활동형", color: "blue" },
-          { name: "모험형", color: "green" },
-          { name: "스포츠형", color: "orange" },
-          { name: "AI창의형", color: "purple" },
-          { name: "행사형", color: "yellow" },
-        ],
-      },
-    },
-    설명: { rich_text: {} },
-    "이미지 경로": { url: {} },
-    "공개 여부": { checkbox: {} },
-    "정렬 순서": { number: { format: "number" } },
-  };
+  const childMap = await listChildDatabases(NOTION_PAGE_ID);
 
-  const programProperties = {
-    제목: { title: {} },
-    slug: { rich_text: {} },
-    "짧은 설명": { rich_text: {} },
-    "상세 설명": { rich_text: {} },
-    카테고리: {
-      select: {
-        options: [
-          { name: "activity", color: "blue" },
-          { name: "adventure", color: "green" },
-          { name: "sports", color: "orange" },
-          { name: "recreation", color: "yellow" },
-          { name: "ai-creative", color: "purple" },
-        ],
-      },
-    },
-    태그: { multi_select: {} },
-    "추천 대상": { rich_text: {} },
-    "운영 시간": { rich_text: {} },
-    "운영 장소": { rich_text: {} },
-    "이미지 경로": { url: {} },
-    "기본 단가": { number: { format: "won" } },
-    "공개 여부": { checkbox: {} },
-    "정렬 순서": { number: { format: "number" } },
-  };
+  for (const definition of databaseDefinitions) {
+    await ensureDatabase(definition, childMap);
+  }
 
-  await ensureDatabase({
-    title: "갤러리 데이터베이스",
-    properties: galleryProperties,
-  });
-
-  await ensureDatabase({
-    title: "프로그램 데이터베이스",
-    properties: programProperties,
-  });
-
-  console.log("Notion setup completed.");
+  console.log("Notion database setup finished.");
 }
 
 main().catch((error) => {

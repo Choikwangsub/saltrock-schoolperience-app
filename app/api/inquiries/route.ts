@@ -1,10 +1,37 @@
+import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
-import { isValidAdminPassword } from "@/lib/adminAuth";
+import { assertAdminFromRequest } from "@/lib/api/adminGuard";
+import { syncInquiryById } from "@/lib/notion/sync";
+import { getPrograms } from "@/lib/programs";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { InquiryLifecycleStatus } from "@/lib/types";
 
-function getAdminPasswordFromHeaders(headers: Headers) {
-  return headers.get("x-admin-password");
+const statusValues: InquiryLifecycleStatus[] = [
+  "new",
+  "contacted",
+  "confirmed",
+  "completed",
+  "cancelled",
+];
+
+function normalizeProgramSlug(value: string) {
+  const programs = getPrograms();
+  const matchedBySlug = programs.find((program) => program.slug === value);
+  if (matchedBySlug) {
+    return matchedBySlug.slug;
+  }
+
+  const matchedByTitle = programs.find((program) => program.title === value);
+  if (matchedByTitle) {
+    return matchedByTitle.slug;
+  }
+
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\- ]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function mapInquiryRow(row: Record<string, unknown>) {
@@ -12,16 +39,32 @@ function mapInquiryRow(row: Record<string, unknown>) {
     id: String(row.id ?? ""),
     name: String(row.name ?? ""),
     phone: String(row.phone ?? ""),
-    email: row.email ? String(row.email) : null,
-    organizationName: String(row.organization_name ?? ""),
-    programInterest: String(row.program_interest ?? ""),
-    preferredDate: row.preferred_date ? String(row.preferred_date) : null,
-    expectedStudents: row.expected_students ? String(row.expected_students) : null,
+    email: typeof row.email === "string" ? row.email : null,
+    programSlug: typeof row.program_slug === "string" ? row.program_slug : null,
+    programInterest:
+      typeof row.program_interest === "string"
+        ? row.program_interest
+        : typeof row.program_slug === "string"
+          ? row.program_slug
+          : "",
+    organizationName: typeof row.organization_name === "string" ? row.organization_name : "",
+    preferredDate: typeof row.preferred_date === "string" ? row.preferred_date : null,
+    expectedStudents: typeof row.expected_students === "string" ? row.expected_students : null,
     message: String(row.message ?? ""),
-    status: (row.status as InquiryLifecycleStatus) ?? "new",
-    adminMemo: row.admin_memo ? String(row.admin_memo) : null,
-    createdAt: row.created_at ? String(row.created_at) : "",
+    status: statusValues.includes(row.status as InquiryLifecycleStatus)
+      ? (row.status as InquiryLifecycleStatus)
+      : "new",
+    adminMemo: typeof row.admin_memo === "string" ? row.admin_memo : null,
+    syncStatus: typeof row.sync_status === "string" ? row.sync_status : "pending",
+    syncError: typeof row.sync_error === "string" ? row.sync_error : null,
+    createdAt: typeof row.created_at === "string" ? row.created_at : "",
   };
+}
+
+function revalidateInquiryPaths() {
+  revalidatePath("/contact");
+  revalidatePath("/hub");
+  revalidatePath("/hub/notion");
 }
 
 export async function POST(request: Request) {
@@ -32,6 +75,7 @@ export async function POST(request: Request) {
       email?: string;
       organizationName?: string;
       programInterest?: string;
+      programSlug?: string;
       preferredDate?: string;
       expectedStudents?: string;
       message?: string;
@@ -40,59 +84,69 @@ export async function POST(request: Request) {
     const name = body.name?.trim() ?? "";
     const phone = body.phone?.trim() ?? "";
     const organizationName = body.organizationName?.trim() ?? "";
-    const programInterest = body.programInterest?.trim() ?? "";
     const message = body.message?.trim() ?? "";
+    const rawProgramValue = body.programSlug?.trim() || body.programInterest?.trim() || "";
+    const programSlug = rawProgramValue ? normalizeProgramSlug(rawProgramValue) : "";
 
-    if (!name || !phone || !organizationName || !programInterest || !message) {
+    if (!name || !phone || !message || !rawProgramValue) {
       return NextResponse.json(
-        { ok: false, message: "필수 항목을 모두 입력해 주세요." },
+        { ok: false, message: "필수 항목(이름, 연락처, 프로그램, 문의 내용)을 입력해 주세요." },
         { status: 400 },
       );
     }
 
     const supabase = getSupabaseAdmin();
-    const { error } = await supabase.from("inquiries").insert({
-      name,
-      phone,
-      email: body.email?.trim() || null,
-      organization_name: organizationName,
-      program_interest: programInterest,
-      preferred_date: body.preferredDate?.trim() || null,
-      expected_students: body.expectedStudents?.trim() || null,
-      message,
-      status: "new",
-    });
+    const { data, error } = await supabase
+      .from("inquiries")
+      .insert({
+        name,
+        phone,
+        email: body.email?.trim() || null,
+        program_slug: programSlug || null,
+        message,
+        status: "new",
+        notion_page_id: null,
+        sync_status: "pending",
+        sync_error: null,
+        organization_name: organizationName || null,
+        program_interest: body.programInterest?.trim() || rawProgramValue,
+        preferred_date: body.preferredDate?.trim() || null,
+        expected_students: body.expectedStudents?.trim() || null,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
+    if (error || !data?.id) {
       return NextResponse.json(
         {
           ok: false,
-          message: "문의 저장 중 오류가 발생했습니다.",
-          error: error.message,
+          message: error?.message ?? "문의 저장 중 오류가 발생했습니다.",
         },
         { status: 500 },
       );
     }
 
+    const syncResult = await syncInquiryById(String(data.id));
+    revalidateInquiryPaths();
+
     return NextResponse.json({
       ok: true,
+      id: data.id,
+      sync: syncResult,
       message: "문의가 접수되었습니다. 담당자가 확인 후 연락드리겠습니다.",
     });
-  } catch {
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "요청 처리 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "문의 처리 중 오류" },
       { status: 500 },
     );
   }
 }
 
 export async function GET(request: Request) {
-  const adminPassword = getAdminPasswordFromHeaders(request.headers);
-  if (!isValidAdminPassword(adminPassword)) {
-    return NextResponse.json(
-      { ok: false, message: "관리자 인증이 필요합니다." },
-      { status: 401 },
-    );
+  const unauthorized = assertAdminFromRequest(request);
+  if (unauthorized) {
+    return unauthorized;
   }
 
   try {
@@ -104,7 +158,7 @@ export async function GET(request: Request) {
 
     if (error) {
       return NextResponse.json(
-        { ok: false, message: "문의 목록을 가져오지 못했습니다.", error: error.message },
+        { ok: false, message: error.message || "문의 조회 실패", items: [] },
         { status: 500 },
       );
     }
@@ -113,21 +167,18 @@ export async function GET(request: Request) {
       ok: true,
       items: (data ?? []).map((row) => mapInquiryRow(row as Record<string, unknown>)),
     });
-  } catch {
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "문의 조회 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "문의 조회 중 오류", items: [] },
       { status: 500 },
     );
   }
 }
 
 export async function PATCH(request: Request) {
-  const adminPassword = getAdminPasswordFromHeaders(request.headers);
-  if (!isValidAdminPassword(adminPassword)) {
-    return NextResponse.json(
-      { ok: false, message: "관리자 인증이 필요합니다." },
-      { status: 401 },
-    );
+  const unauthorized = assertAdminFromRequest(request);
+  if (unauthorized) {
+    return unauthorized;
   }
 
   try {
@@ -139,41 +190,45 @@ export async function PATCH(request: Request) {
 
     const id = body.id?.trim();
     if (!id) {
-      return NextResponse.json(
-        { ok: false, message: "수정할 문의 ID가 필요합니다." },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, message: "문의 ID가 필요합니다." }, { status: 400 });
     }
 
-    const updates: Record<string, unknown> = {};
+    const updates: Record<string, unknown> = {
+      sync_status: "pending",
+      sync_error: null,
+    };
+
     if (body.status) {
+      if (!statusValues.includes(body.status)) {
+        return NextResponse.json(
+          { ok: false, message: "유효하지 않은 문의 상태입니다." },
+          { status: 400 },
+        );
+      }
       updates.status = body.status;
     }
-    if (body.adminMemo !== undefined) {
-      updates.admin_memo = body.adminMemo;
-    }
 
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json(
-        { ok: false, message: "수정할 항목이 없습니다." },
-        { status: 400 },
-      );
+    if (body.adminMemo !== undefined) {
+      updates.admin_memo = body.adminMemo.trim() || null;
     }
 
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from("inquiries").update(updates).eq("id", id);
-
     if (error) {
-      return NextResponse.json(
-        { ok: false, message: "문의 수정 중 오류가 발생했습니다.", error: error.message },
-        { status: 500 },
-      );
+      return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, message: "문의 정보가 업데이트되었습니다." });
-  } catch {
+    const syncResult = await syncInquiryById(id);
+    revalidateInquiryPaths();
+
+    return NextResponse.json({
+      ok: true,
+      sync: syncResult,
+      message: "문의 정보가 수정되었습니다.",
+    });
+  } catch (error) {
     return NextResponse.json(
-      { ok: false, message: "문의 수정 처리 중 오류가 발생했습니다." },
+      { ok: false, message: error instanceof Error ? error.message : "문의 수정 중 오류" },
       { status: 500 },
     );
   }
