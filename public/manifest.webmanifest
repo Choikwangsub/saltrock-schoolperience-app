@@ -1,0 +1,17 @@
+{
+  "name": "SaltRock Schoolperience",
+  "short_name": "SaltRock",
+  "description": "학교와 기관으로 직접 찾아가는 활동형·창의형 체험학습 프로그램",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f7f2",
+  "theme_color": "#12366f",
+  "lang": "ko-KR",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}
